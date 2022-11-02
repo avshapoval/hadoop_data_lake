@@ -5,19 +5,14 @@ from cachetools import cached
 
 import pyspark.sql.functions as F
 from pyspark.sql.window import Window
-from pyspark import SparkContext, SparkConf
-from pyspark.sql import SQLContext
+from pyspark.sql import SparkSession
 
 namenode_url = sys.argv[1]
 base_input_path = sys.argv[2]
 base_output_path = sys.argv[3]
 
-conf = SparkConf().setAppName(f"SaveReportUsersByCities")
-sc = SparkContext(conf=conf)
-sql = SQLContext(sc)
-
-def get_user_geo(namenode_url, base_input_path):
-    mes_geo = sql.read.parquet(f"{namenode_url}{base_input_path}")
+def get_user_geo(namenode_url: str, base_input_path: str, spark: SparkSession):
+    mes_geo = spark.read.parquet(f"{namenode_url}{base_input_path}")
 
     user_geo = mes_geo\
         .where("event_type == 'message'")\
@@ -27,7 +22,7 @@ def get_user_geo(namenode_url, base_input_path):
     return user_geo
 
 
-def save_report(namenode_url, base_input_path, base_output_path):
+def save_report(namenode_url: str, base_input_path: str, base_output_path: str, spark: SparkSession):
     
     #Для того, чтобы не создавать экземпляр класса каждый раз при вызове udf, можно закэшировать этот экземпляр
     @cached(cache={})
@@ -42,7 +37,7 @@ def save_report(namenode_url, base_input_path, base_output_path):
         tz_str = tf.timezone_at(lng=lng, lat=lat)
         return tz_str
 
-    user_geo = get_user_geo(namenode_url, base_input_path)
+    user_geo = get_user_geo(namenode_url, base_input_path, spark)
 
     window_act_city = Window().partitionBy("user_id").orderBy(F.desc("dt"))
 
@@ -79,10 +74,12 @@ def save_report(namenode_url, base_input_path, base_output_path):
         .join(user_cities_visited, on="user_id", how="left")
 
     #write it
-    sql.write.mode("overwrite").parquet(f"{namenode_url}{base_output_path}")
+    user_city_info.write.mode("overwrite").parquet(f"{namenode_url}{base_output_path}")
+
 
 def main():
-    save_report(namenode_url, base_input_path, base_output_path)
+    spark = SparkSession.builder.master("yarn").appName(f"calculate_user_city").getOrCreate()
+    save_report(namenode_url, base_input_path, base_output_path, spark)
 
 
 if __name__ == "__main__":
